@@ -1,0 +1,4 @@
+[submodule "code/module_workflows/rna_seq"]
+	path = code/module_workflows/rna_seq
+	url = git@github.com:bfairkun/snakemake-workflow_rna-seq.git
+	branch = main

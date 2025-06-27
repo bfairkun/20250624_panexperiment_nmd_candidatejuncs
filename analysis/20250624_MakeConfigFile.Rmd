@@ -1,0 +1,247 @@
+---
+title: "20250624_MakeConfigFile"
+author: "Benjamin Fair"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = F, message = F)
+```
+
+## Intro
+
+Similar to [Lim et al](https://www.nature.com/articles/s41467-020-17093-9), we want to create a extensive list of naturally occuring unproductive ("poison") splice junctions that may be candidates for gene up-regulation by splice-blocking ASOs. Lim et al used Gencode and RefSeq annotations to identify annotated splice junctions that are not in productive transcripts (eg, the junctions that are unique to "nonsense_mediated_decay"-tagged transcript isoforms, or which have a RefSeq ID prefixed with NR, indicating a noncoding transcript). They then use a previously published cyclohexamide treatment RNA-seq to note that a large fraction of these are indeed responsive to translation/NMD inihibition. 
+
+Our has recently developed leafcutter2 junction classifying algorithm, which uses a combination of splice junction annotations and RNA-seq data to classify splice junctions as "productive" or "unproductive". From our analyses of unproductive NMD-inducing junctions, they identified with similar (albeit incomplete) power/enrichment by looking at (1) nascent or nuclear RNA vs steady-state or cytoplasmic RNA, (2) NMD knockdown or inhibition vs control, (3) highly translated vs lowly translated transcripts in polysome profiling sequencing experiments. In this project, I will use my RNA-seq snakemake pipeline to process a number of these types of RNA-seq datasets which in effect might contrast NMD-target isoforms from productive isoforms, and then use the leafcutter2 algorithm to classify splice junctions as productive or unproductive. My hope is that the variety of datasets using a variety of approaches or cell types will make a decent sort of pan-experiment TANGO-like database of candidate splice sites to target for upregulation. Some of the datasets I will use are:
+
+- [Fair et al](https://www.nature.com/articles/s41588-024-01872-x), our own dataset of (chroamatin associated RNA)-seq dataset from EBV-immortalized lymphoblastoid cell lines (LCLs), compared to standard polyA+ RNA-seq on the same LCL lines from the GEUVADIS consortium dataset
+- [Floor & Doudna](https://elifesciences.org/articles/10921) polysome profiling dataset in HEK293T... Unproductive junctions should be less likely to be associated with polysomes than monosomes.
+- [Darman et al](https://pubmed.ncbi.nlm.nih.gov/26565915/) dataset of NALM6 (lymphblastic leukemia) cells treated with translation inhibitor (cyclohexamide) or DMSO, which was used to identify NMD targets. This is the dataset that Lim et al used to validate their unproductive junctions. This project contains SF3B1 mutatant and SF3B1 WT NALM6 cells, and the cyclohexamide treatment is done on both cell types, but I will just use the WT cells for this analysis
+- [Colombo et al](https://pmc.ncbi.nlm.nih.gov/articles/PMC5238794/) did siRNA knockdown of NMD factors in HeLa cells, and then did RNA-seq to identify NMD targets. This includes UPF1 KD, and also SMG6/SMG7 double KD which we have found to be the most potent treatment for up-regulating unproductive junctions. This project contains quite a few different knockdown conditions, but I will just use the UPF1 KD, and the SMG6/7 double KD, and the control siRNA conditions.
+- [Karousis et al](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-021-02439-3) is the same experiments as Colombo but with Nanopore long read sequencing
+- [Sterne-Weiler et al](https://pubmed.ncbi.nlm.nih.gov/23783272/) is Sanford lab's dataset of polysome-profiling RNA-seq from HEK293T (immortalized embryonic kidney) cells
+- [Ritter et al](https://pubmed.ncbi.nlm.nih.gov/38839373/), again Sanford lab's polysome profiling, but this time using both Illumina short read and long-read Nanopore sequencing with human embyronic stem cells (hESCs) and neural progenitor cells (NPCs)
+- Our own lab's unpublished nucleoplasm vs cytoplasm RNA-seq datasets in SH-SY5Y (neuorblastoma cell line), Jurkat (immortalized T cell line), and LCL cell lines
+- Our own lab's unpublished polysome profiling dataset in LCLs
+
+Can add more later if I find other good datasets... But for now this is enough to get started. Now I will create a samples config file that lists all of these datasets, and then I will use this config file to run the snakemake pipeline to process the RNA-seq data and classify splice junctions.
+
+So to do this I need to tidy some of the metadata from these datasets... Some of the metadata I downloaded by going to the publication, finding the GEO accession, then following the link to the SRA project accession, then downloading data from [SRA run selector](https://www.ncbi.nlm.nih.gov/Traces/study/?acc=PRJNA1023968&o=acc_s%3Aa), while some unpublished datasets from our lab I already have in our UChicago HPC storage filesystem, while some I already have in a tidy samples config tsv format from previous analyses. So I will do the work of manual tidying here:
+
+## Code
+
+#### Floor & Sterne-Weiler polysome profiling datasets
+
+These ones I have already have in a tidy format from previous analyses, so I will just load them in and display them.
+
+```{r}
+library(tidyverse)
+
+
+Tidy_PreviousPolysomeDat <- read_tsv("../../2024_polysomeprofilingexploration/code/config/rna-seq_samples.tsv") %>%
+    filter(study_accession %in% c("PRJNA193306", "PRJNA285284")) %>%
+    mutate(StudyFirstAuthor = case_when(
+        study_accession == "PRJNA193306" ~ "Sterne-Weiler",
+        study_accession == "PRJNA285284" ~ "Floor"
+    ))
+
+Tidy_PreviousPolysomeDat %>%
+    knitr::kable()
+
+```
+
+#### Fair et al LCL dataset
+
+This one is two datasets: our own chromatin-associated RNA-seq dataset, and the GEUVADIS consortium polyA+ RNA-seq dataset. While they are both publicly available on SRA/ENA, I already have the chRNA in our lab's HPC storage filesystem, and the GEUVADIS polyA+ RNA-seq I have in a tidy format from previous analyses. So I will just load in that metadata and tidy/display it here, using local filepaths for the chRNA and the ftp link from the previous metadata file for the GEUVADIS polyA+ RNA-seq
+
+```{r}
+Fair_metadata <- read_tsv("/project2/yangili1/bjf79/ChromatinSplicingQTLs/code/config/samples.tsv", comment="#", guess_max=10000) %>%
+    filter(study_accession == "E-GEUV-1" | Phenotype == "chRNA.Expression.Splicing") %>%
+    filter(RepNumber == 1) %>%
+    # filter for both chRNA and polyA+ RNA-seq
+    group_by(IndID) %>%
+    filter(any(Phenotype == "chRNA.Expression.Splicing") & any(Phenotype == "Expression.Splicing")) %>%
+    ungroup()
+
+# How many unique individuals in this dataset?
+Fair_metadata %>%
+    distinct(IndID) %>%
+    nrow()
+
+# Tidy the metadata
+```
+
+#### Darman, Colombo, Karousis, and Ritter datasets
+
+```{r}
+SRA_run_selector_metadata <- Sys.glob("../data/SRA_run_selector_metadata/*.csv") %>%
+    map_df(~ read_csv(.x, col_types = cols())) %>%
+    mutate(StudyFirstAuthor = recode(BioProject,
+        "PRJNA340370" = "Colombo",
+        "PRJNA295064" = "Darman",
+        "PRJEB44747" = "Karousis",
+        "PRJNA1023968" = "Ritter"
+    )) %>%
+    arrange(StudyFirstAuthor)
+
+SRA_run_selector_metadata %>%
+    count(StudyFirstAuthor)
+
+SRA_run_selector_metadata %>%
+    distinct(BioProject, .keep_all = TRUE)
+
+SRA_run_selector_metadata %>%
+    mutate(cell_type = case_when(
+        StudyFirstAuthor %in% c("Darman", "Karousis") ~ cell_line,
+        StudyFirstAuthor %in% c("Colombo", "Ritter") ~ cell_type,
+    ))
+
+```
+
+#### Our lab's unpublished polysome profiling and nucleoplasm/cytoplasm RNA-seq datasets
+
+```{r}
+DylansDatasets <- read_tsv("/project/yangili1/dylan_stermer/2024_dec_library/snakemake-deeper_libraries/config/samples.tsv") %>%
+    mutate(StudyFirstAuthor = "UnpublishedFractionation")
+
+knitr::kable(DylansDatasets)
+
+PolysomeProfiling <- data.frame(fn = Sys.glob("/project2/yangili1/bjf79/Fastq/20250605_PilotPolysomeProfilingSarah/YL-SF-32s-pl1-*.fastq.gz")) %>%
+    mutate(R1_or_R2 = if_else(str_detect(fn, "_R1_001.fastq.gz"), "R1", "R2")) %>%
+    mutate(SampleName = str_replace(fn, "/project2/yangili1/bjf79/Fastq/20250605_PilotPolysomeProfilingSarah/YL-SF-32s-pl1-(.+?)_S.+$", "\\1")) %>%
+    pivot_wider(names_from = R1_or_R2, values_from = fn) %>%
+    mutate(Description = recode(SampleName,
+        "7-A"="S3_Free",
+        "8-A"="S3_Monosome",
+        "9-A"="S3_LightPolysome",
+        "10-A"="S3_HeavyPolysome",
+        "11-A"="S4_Free",
+        "12-A"="S4_Monosome",
+        "13-A"="S4_LightPolysome",
+        "14-A"="S4_HeavyPolysome",
+        "15-A"="S3_HeavyPolysomeFalconTubeHighYield",
+        "16-A"="S3_MonosomeFalconTubeHighYield")) %>%
+    mutate(StudyFirstAuthor = "UnpublishedPolysomeProfiling") %>%
+    separate(SampleName, into=c("SampleNumber", "SampleLetter"), sep="-", convert=T, remove=F) %>%
+    arrange(SampleNumber)
+    
+knitr::kable(PolysomeProfiling)
+
+```
+
+And now let's come up with some new required metadata columns for the final config file (in addition to the ones already required by the snakemake pipeline, including strandedness, Aligner, fastq filepaths, a unique sample ID, etc):
+
+- `StudyFirstAuthor`: The first author of the study, to group samples by study
+- `cell_type`: The cell type or cell line used in the study, to group samples
+- `Approach`: Either "NMDInhibition", "TranslationProfiling", or "NuclearFractionation", to indicate the approach used in the study
+- `Description`: A short description of the sample, including any relevant treatment or condition
+
+And the unique sample ID will just be SRA_accession, except in the case of the Fair et al and GEUVADIS datasets, in which case I will just use the IndID_[SteadyState|naRNA]
+
+Now let's begin joining tables.
+
+### Joining tables and creating the config file
+
+```{r}
+
+Joined_metadata <- bind_rows(
+    SRA_run_selector_metadata %>%
+        filter(StudyFirstAuthor == "Colombo") %>%
+        mutate(cell_type = "HeLa") %>%
+        mutate(Approach = "NMDInhibition") %>%
+        mutate(Description = str_glue("siRNA {gene_kd}")) %>%
+        dplyr::select(StudyFirstAuthor, cell_type, Approach, Description, SRA_accession=Run, Platform),
+    SRA_run_selector_metadata %>%
+        filter(StudyFirstAuthor == "Darman") %>%
+        mutate(cell_type = "NALM6") %>%
+        mutate(Approach = "NMDInhibition") %>%
+        mutate(Description = if_else(is.na(treatment), "DMSO", "Cyclohexamide")) %>%
+        dplyr::select(StudyFirstAuthor, cell_type, Approach, Description, SRA_accession=Run, Platform),
+    SRA_run_selector_metadata %>%
+        filter(StudyFirstAuthor == "Karousis") %>%
+        mutate(cell_type = "HeLa") %>%
+        mutate(Approach = "NMDInhibition") %>%
+        mutate(Description = case_when(
+            RNA_interference == "scrambled siRNA" ~ "siRNA scramble",
+            str_detect(RNA_interference, "UPF1") ~ "siRNA UPF1",
+            str_detect(RNA_interference, "double") ~ "siRNA SMG6, SMG7")) %>%
+        dplyr::select(StudyFirstAuthor, cell_type, Approach, Description, SRA_accession=Run, Platform),
+    SRA_run_selector_metadata %>%
+        filter(StudyFirstAuthor == "Ritter") %>%
+        dplyr::mutate(Description = Fraction, Approach="TranslationProfiling") %>%
+        dplyr::select(StudyFirstAuthor, cell_type, Approach, Description, SRA_accession=Run, Platform),
+    Fair_metadata %>%
+        mutate(StudyFirstAuthor = if_else(Phenotype == "chRNA.Expression.Splicing", "Fair", "GEUVADIS")) %>%
+        mutate(cell_type = "LCL") %>%
+        mutate(Approach = "NuclearFractionation") %>%
+        mutate(Description = if_else(Phenotype == "chRNA.Expression.Splicing", "naRNAseq", "SteadyStateRNAseq")) %>%
+        mutate(Platform = "ILLUMINA") %>%
+        mutate(sample = str_glue("{IndID}_{Description}")) %>%
+        dplyr::select(StudyFirstAuthor, cell_type, Approach, Description, Platform, R1_link=R1_ftp, R2_link=R2_ftp, R1=R1_local, R2=R2_local, sample),
+    Tidy_PreviousPolysomeDat %>%
+        filter(StudyFirstAuthor == "Floor") %>%
+        mutate(Approach = "TranslationProfiling") %>%
+        mutate(cell_type = "HEK293T") %>%
+        mutate(Description = sample_title) %>%
+        dplyr::select(StudyFirstAuthor, cell_type, Approach, Description, SRA_accession) %>%
+        mutate(Platform = "ILLUMINA"),
+    Tidy_PreviousPolysomeDat %>%
+        filter(StudyFirstAuthor == "Sterne-Weiler") %>%
+        mutate(Approach = "TranslationProfiling") %>%
+        mutate(cell_type = "HEK293T") %>%
+        mutate(Description = sample_title) %>%
+        dplyr::select(StudyFirstAuthor, cell_type, Approach, Description, SRA_accession) %>%
+        mutate(Platform = "ILLUMINA"),
+    DylansDatasets %>%
+        mutate(cell_type = case_when(
+            str_detect(sample, "SH_SY5Y") ~ "SH-SY5Y",
+            str_detect(sample, "jurkat") ~ "Jurkat",
+            str_detect(sample, "LCL") ~ "LCL"
+        )) %>%
+        mutate(Approach = "NuclearFractionation") %>%
+        mutate(Description = sample) %>%
+        mutate(sample = str_glue("UnpubFractionation_{Description}")) %>%
+        dplyr::select(StudyFirstAuthor, cell_type, Approach, Description, R1, R2, sample) %>%
+        mutate(Platform = "ILLUMINA"),
+    PolysomeProfiling %>%
+        mutate(cell_type = "LCL") %>%
+        mutate(Approach = "TranslationProfiling") %>%
+        mutate(sample = str_glue("UnpubPolysomeProfiling_{SampleNumber}")) %>%
+        dplyr::select(sample, StudyFirstAuthor, cell_type, Approach, Description, R1, R2) %>%
+        mutate(Platform = "ILLUMINA")
+) %>%
+    mutate(STARGenomeName = "GRCh38_GencodeRelease44Comprehensive", Strandedness = "U") %>%
+    mutate(sample = if_else(is.na(sample), SRA_accession, sample)) %>%
+    mutate(Aligner = if_else(Platform == "ILLUMINA", "STAR", "minimap2")) %>%
+    dplyr::select(sample, everything()) %>%
+    arrange(Approach, StudyFirstAuthor, cell_type, Description, sample)
+
+
+Joined_metadata %>%
+    knitr::kable()
+
+
+
+```
+
+Now write out that metadata file to a tsv file that I can use as a config file for the snakemake pipeline:
+
+```{r, eval=F}
+Joined_metadata %>%
+    write_tsv("../code/config/samples.tsv")
+```
+
+A plot to visualize the metadata for the samples I am anaylzing here:
+
+```{r}
+Joined_metadata %>%
+    count(Approach, StudyFirstAuthor, cell_type) %>%
+    ggplot(aes(x=StudyFirstAuthor, y=n, fill=cell_type)) +
+        geom_col(position="stack") +
+        facet_wrap(~Approach, scales="free_x") +
+        theme_bw() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+        labs(y="Number RNA-seq samples", title="Samples to analyze for NMD targeted junctions, split by approach", caption="Karousis and Ritter datasets are long-read Nanopore sequencing\nall others are Illumina short-read sequencing")
+    
+```

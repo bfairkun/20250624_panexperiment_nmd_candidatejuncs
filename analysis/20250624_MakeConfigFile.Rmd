@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE, warning = F, message = F)
 
 ## Intro
 
-Similar to [Lim et al](https://www.nature.com/articles/s41467-020-17093-9), we want to create a extensive list of naturally occuring unproductive ("poison") splice junctions that may be candidates for gene up-regulation by splice-blocking ASOs. Lim et al used Gencode and RefSeq annotations to identify annotated splice junctions that are not in productive transcripts (eg, the junctions that are unique to "nonsense_mediated_decay"-tagged transcript isoforms, or which have a RefSeq ID prefixed with NR, indicating a noncoding transcript). They then use a previously published cyclohexamide treatment RNA-seq to note that a large fraction of these are indeed responsive to translation/NMD inihibition. 
+Similar to [Lim et al](https://www.nature.com/articles/s41467-020-17093-9), we want to create a extensive list of naturally occuring unproductive ("poison") splice junctions that may be candidates for gene up-regulation by splice-blocking ASOs. Lim et al used Gencode and RefSeq annotations to identify annotated splice junctions that are not in productive transcripts (eg, the junctions that are unique to "nonsense_mediated_decay"-tagged transcript isoforms, or which have a RefSeq ID prefixed with NR, indicating a noncoding transcript). They then use a previously published cyclohexamide treatment RNA-seq to note that a large fraction of these are responsive to translation/NMD inihibition. 
 
 Our has recently developed leafcutter2 junction classifying algorithm, which uses a combination of splice junction annotations and RNA-seq data to classify splice junctions as "productive" or "unproductive". From our analyses of unproductive NMD-inducing junctions, they identified with similar (albeit incomplete) power/enrichment by looking at (1) nascent or nuclear RNA vs steady-state or cytoplasmic RNA, (2) NMD knockdown or inhibition vs control, (3) highly translated vs lowly translated transcripts in polysome profiling sequencing experiments. In this project, I will use my RNA-seq snakemake pipeline to process a number of these types of RNA-seq datasets which in effect might contrast NMD-target isoforms from productive isoforms, and then use the leafcutter2 algorithm to classify splice junctions as productive or unproductive. My hope is that the variety of datasets using a variety of approaches or cell types will make a decent sort of pan-experiment TANGO-like database of candidate splice sites to target for upregulation. Some of the datasets I will use are:
 
@@ -203,6 +203,9 @@ Joined_metadata <- bind_rows(
         mutate(Description = sample) %>%
         mutate(sample = str_glue("UnpubFractionation_{Description}")) %>%
         dplyr::select(StudyFirstAuthor, cell_type, Approach, Description, R1, R2, sample) %>%
+        #Edit filepaths for Dylan's unpublished datasets
+        mutate(R1 = str_replace(R1, "/project/yangili1/dylan_stermer/.+/(.+?.fastq.gz)$", "/project2/yangili1/bjf79/Fastq/20250605_nuclearRNA/\\1")) %>%
+        mutate(R2 = str_replace(R2, "/project/yangili1/dylan_stermer/.+/(.+?.fastq.gz)$", "/project2/yangili1/bjf79/Fastq/20250605_nuclearRNA/\\1")) %>%
         mutate(Platform = "ILLUMINA"),
     PolysomeProfiling %>%
         mutate(cell_type = "LCL") %>%
@@ -228,8 +231,21 @@ Joined_metadata %>%
 Now write out that metadata file to a tsv file that I can use as a config file for the snakemake pipeline:
 
 ```{r, eval=F}
+
 Joined_metadata %>%
     write_tsv("../code/config/samples.tsv")
+
+read_tsv("../code/config/samples.links_filled.tsv") %>%
+    mutate(R1 = case_when(
+        StudyFirstAuthor == "UnpublishedFractionation" ~ str_replace(R1, "/project/yangili1/dylan_stermer/.+/(.+?.fastq.gz)$", "/project2/yangili1/bjf79/Fastq/20250605_nuclearRNA/\\1"),
+        TRUE ~ R1
+    ),
+    R2 = case_when(
+        StudyFirstAuthor == "UnpublishedFractionation" ~ str_replace(R2, "/project/yangili1/dylan_stermer/.+/(.+?.fastq.gz)$", "/project2/yangili1/bjf79/Fastq/20250605_nuclearRNA/\\1"),
+        TRUE ~ R2
+    )) %>%
+    write_tsv("../code/config/samples.links_filled.tsv")
+
 ```
 
 A plot to visualize the metadata for the samples I am anaylzing here:

@@ -1,0 +1,830 @@
+---
+title: "20250716_Explore Differential Expression and Splicing Results"
+author: "Benjamin Fair"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = F, message = F)
+```
+
+## Introduction
+
+I have done my standard differential expression analysis with edgeR, and differential splicing analysis with leafcutter, for a bunch of contrasts that in some sense compare NMD enriched datasets to control. Here I will explore the results.
+
+## Code
+
+```{r}
+library(data.table)
+library(tidyverse)
+library(valr)
+library(ggrepel)
+
+# theshold in percent
+dPSI_threshold <- 1
+
+diff.splicing.results <- Sys.glob("../code/rna_seq/SplicingAnalysis/differential_splicing_tidy/*/Results.tsv.gz") %>%
+    setNames(str_replace(., "../code/rna_seq/SplicingAnalysis/differential_splicing_tidy/(.+?)/Results.tsv.gz", "\\1")) %>%
+    lapply(fread) %>%
+    bind_rows(.id = "Contrast") %>%
+    mutate(deltapsi = deltapsi * 100) %>%
+    mutate(IsSig = p.adjust < 0.01 & abs(deltapsi) > dPSI_threshold)
+
+
+
+Introns <- fread("../code/rna_seq/SplicingAnalysis/ClassifyJuncs/GRCh38_GencodeRelease44Comprehensive/Leaf2_junction_classifications.txt") %>%
+    separate(Intron_coord, into=c("chrom", "start", "end"), sep="[:-]", convert=T, remove=F)
+
+Clustered_Introns <- fread("../code/rna_seq/SplicingAnalysis/leafcutter/GRCh38_GencodeRelease44Comprehensive/juncTableBeds/JuncCounts.sorted.bed.gz", select=1:6, col.names=c("chrom", "start", "end", "name", "score", "strand")) %>%
+    mutate(end = end - 1)
+
+Clustered_Introns %>%
+    filter(chrom == "chr2" & start > 148502439 & end < 148510087)
+
+Introns %>%
+    filter(chrom == "chr2" & start > 148502439 & end < 148510087)
+```
+
+Make bed of introns with colors based on coding status and whether they are annotated in gencode
+
+```{r}
+Introns %>%
+    inner_join(
+        Clustered_Introns,
+        by=c("chrom", "start", "end")) %>%
+    mutate(Color = case_when(
+        GencodePC ~ "#1f78b4",
+        Coding & !Annot ~ "#a6cee3",
+        !Coding & Annot ~ "#e31a1c",
+        !Coding & !Annot ~ "#fb9a99",
+        TRUE ~ "#969696"
+    )) %>%
+    mutate(thickStart = start, thickEnd = end) %>%
+    dplyr::select(chrom, start, end, name, score=score, strand, thickStart, thickEnd, Color) %>%
+    distinct() %>%
+    arrange(chrom, start, end) %>%
+    write_tsv("../output/CODING_COLORED_LEAFCUTTER_INTRONS.bed", col_names = FALSE)
+```
+
+And read in gene names and differential expression results
+
+```{r}
+Gene_symbols <- read_tsv("/project2/yangili1/bjf79/ReferenceGenomes/Human_UCSC.hg38_GencodeComprehensive46/GeneSymbols.tsv.gz", col_names=c("Transcript", "Symbol", "HGNC_id"))
+
+Gene_names <- fread("/project2/yangili1/bjf79/ReferenceGenomes/Human_UCSC.hg38_GencodeComprehensive46/Reference.ColoredTranscripts.bed.gz", header=F) %>%
+    inner_join(
+        Gene_symbols,
+        by = c("V4" = "Transcript")
+    ) %>%
+    distinct(GeneID=V13, Symbol)
+
+RepresentativeTranscripts <- fread("/project2/yangili1/bjf79/ReferenceGenomes/Human_UCSC.hg38_GencodeComprehensive46/Reference.ColoredTranscripts.bed.gz", header=F) %>%
+    dplyr::rename(GeneID=V13) %>%
+    filter(V16 == "protein_coding") %>%
+    mutate(Len = V3 - V2) %>%
+    arrange(GeneID, desc(V10), desc(Len)) %>%
+    distinct(GeneID, .keep_all=T) %>%
+    inner_join(
+        Gene_names,
+        by=c("GeneID")
+    )
+
+DE.results <- Sys.glob("../code/rna_seq/differential_expression/*/results.tsv.gz") %>%
+    setNames(str_replace(., "../code/rna_seq/differential_expression/(.+?)/results.tsv.gz", "\\1")) %>%
+    lapply(fread) %>%
+    bind_rows(.id = "condition") %>%
+    left_join(Gene_names, by=c("GeneID"))
+
+
+```
+
+Check CERT1 quickly at Michelle's request...
+
+```{r}
+DE.results %>%
+    filter(!str_detect(condition, "Sara")) %>%
+    filter(Symbol == "CERT1") %>%
+    ggplot(aes(x=logFC, y=-log10(PValue))) +
+    geom_point() +
+    geom_vline(xintercept=0, linetype="dashed") +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    geom_text_repel(aes(label=condition), size=3) +
+    theme_bw()
+```
+
+### Summary plots
+
+```{r}
+DE.results %>%
+    mutate(IsSig = case_when(
+        FDR < 0.01 & abs(logFC) > 1 ~ "FDR<1% & |logFC|>1",
+        FDR < 0.01 & abs(logFC) < 1 ~ "FDR<1% & |logFC|<1",
+        TRUE ~ "NS"
+    )) %>%
+    mutate(IsSig = factor(IsSig, levels=c("FDR<1% & |logFC|>1", "FDR<1% & |logFC|<1", "NS"))) %>%
+    count(condition, IsSig) %>%
+    ggplot(aes(y=condition, x=n, fill=IsSig)) +
+    geom_col(position = "stack") +
+    scale_fill_manual(values=c("FDR<1% & |logFC|>1"="#8e0152", "FDR<1% & |logFC|<1"="#276419", "NS"="#f7f7f7")) +
+    # geom_label_repel(data = . %>%
+    #     filter(!IsSig == "NS"),
+    #     aes(label=n), hjust=0, position = position_stack()) +
+    labs(x="Number of genes", y="Condition", fill="Significance")
+
+DE.results %>%
+    mutate(IsSig = case_when(
+        FDR < 0.01 & logFC > 1 ~ "logFC>1",
+        FDR < 0.01 & logFC < -1 ~ "logFC<-1",
+        FDR < 0.01 & logFC > 0 & logFC < 1 ~ "0<logFC<1",
+        FDR < 0.01 & logFC < 0 & logFC > -1 ~ "-1<logFC<0",
+        TRUE ~ "NS; FDR>1%"
+    )) %>%
+    mutate(IsSig = factor(IsSig, levels=rev(c("logFC<-1", "-1<logFC<0", "NS; FDR>1%", "0<logFC<1", "logFC>1")))) %>%
+    count(condition, IsSig) %>%
+    ggplot(aes(y=condition, x=n, fill=IsSig)) +
+    geom_col(position = "stack") +
+    scale_y_discrete(limits = rev) +
+    scale_fill_manual(values=c("logFC<-1"="#276419", "-1<logFC<0"="#7fbc41", "NS; FDR>1%"="#f7f7f7", "0<logFC<1"="#de77ae", "logFC>1"="#8e0152")) +
+    # geom_label_repel(data = . %>%
+    #     filter(!IsSig == "NS"),
+    #     aes(label=n), hjust=0, position = position_stack()) +
+    labs(x="Number of genes", y="Condition", fill="Significance")
+
+DE.results %>%
+    filter(!str_detect(condition, "Sara")) %>%
+    mutate(IsSig = case_when(
+        FDR < 0.01 & logFC > 1 ~ "logFC>1",
+        FDR < 0.01 & logFC < -1 ~ "logFC<-1",
+        FDR < 0.01 & logFC > 0 & logFC < 1 ~ "0<logFC<1",
+        FDR < 0.01 & logFC < 0 & logFC > -1 ~ "-1<logFC<0",
+        TRUE ~ "NS; FDR>1%"
+    )) %>%
+    mutate(IsSig = factor(IsSig, levels=rev(c("logFC<-1", "-1<logFC<0", "NS; FDR>1%", "0<logFC<1", "logFC>1")))) %>%
+    count(condition, IsSig) %>%
+    ggplot(aes(y=condition, x=n, fill=IsSig)) +
+    geom_col(position = "stack") +
+    scale_y_discrete(limits = rev) +
+    scale_fill_manual(values=c("logFC<-1"="#276419", "-1<logFC<0"="#7fbc41", "NS; FDR>1%"="#f7f7f7", "0<logFC<1"="#de77ae", "logFC>1"="#8e0152")) +
+    scale_x_continuous(expand = expansion(mult = c(0, 0.1))) +
+    theme_classic() +
+    # geom_label_repel(data = . %>%
+    #     filter(!IsSig == "NS"),
+    #     aes(label=n), hjust=0, position = position_stack()) +
+    labs(x="Number of genes", y="Condition", fill="Significance")
+```
+
+Ok, let's also look at MA plots to make sure they are generally sensible...
+
+```{r}
+DE.results %>%
+    mutate(FDR_under_0.01 = FDR < 0.01) %>%
+    ggplot(aes(x=logCPM, y=logFC)) +
+    # geom_hex(bins=20) +
+    geom_point(aes(color=FDR_under_0.01), alpha=0.5) +
+    geom_hline(yintercept=0, color='gray') +
+    ylim(c(-4,4)) +
+    theme_bw() +
+    facet_wrap(~condition) +
+    labs(x="logCPM", y="logFC", title="MA plot of differential expression results") +
+    scale_fill_gradient(trans='log10', low = "white", high = "dodgerblue")
+```
+
+Ok, some fairly noisy/underpowered contrasts, but at least I don't see really weird assymmetry red flags.
+
+from this cyclohexamide vs dmso is probably the best contrast... Let's look at differential splicing
+
+```{r}
+
+diff.splicing.results %>%
+    filter(IsSig) %>%
+    distinct(Contrast, cluster, .keep_all=T) %>%
+    count(Contrast) %>%
+    arrange(Contrast) %>%
+    ggplot(aes(y=Contrast, x=n)) +
+    geom_col(position='stack') +
+    geom_text(aes(label=n), hjust=-0.1) +
+    scale_y_discrete(limits = rev) +
+    scale_x_continuous(expand = expansion(mult = c(0, 0.1))) +
+    theme_bw() +
+    labs(x="Number of leafcutter significant clusters", y="Contrast", caption=str_glue("FDR<1% & |dPSI|>{dPSI_threshold}%"))
+
+diff.splicing.results %>%
+    filter(!str_detect(Contrast, "Sara")) %>%
+    filter(IsSig) %>%
+    distinct(Contrast, cluster, .keep_all=T) %>%
+    count(Contrast) %>%
+    arrange(Contrast) %>%
+    ggplot(aes(y=Contrast, x=n)) +
+    geom_col(position='stack') +
+    geom_text(aes(label=n), hjust=-0.1) +
+    scale_y_discrete(limits = rev) +
+    scale_x_continuous(expand = expansion(mult = c(0, 0.1))) +
+    theme_classic() +
+    labs(x="Number of leafcutter significant clusters", y="Contrast", caption=str_glue("FDR<1% & |dPSI|>{dPSI_threshold}%"))
+
+```
+
+Let's also look at effect sizes of the unproductive vs productive
+
+```{r}
+
+diff.splicing.results %>%
+    filter(IsSig) %>%
+    group_by(Contrast, cluster, Coding) %>%
+    arrange(desc(abs(deltapsi))) %>%
+    ungroup() %>%
+    distinct(Contrast, cluster, Coding, .keep_all=T) %>%
+    filter(!is.na(Coding)) %>%
+    ggplot(aes(x=logef, color=Coding)) +
+    geom_vline(xintercept=0, color='gray') +
+    stat_ecdf() + 
+    geom_vline( data = . %>%
+        group_by(Contrast, Coding) %>%
+        summarise(median=median(logef, na.rm=T)),
+        aes(xintercept=median, color=Coding), linetype="dashed") +
+    facet_wrap(~Contrast) +
+    coord_cartesian(xlim=c(-2, 2)) +
+    theme_bw()
+
+diff.splicing.results %>%
+    filter(IsSig) %>%
+    filter(!str_detect(Contrast, "Sara")) %>%
+    group_by(Contrast, cluster, Coding) %>%
+    arrange(desc(abs(deltapsi))) %>%
+    ungroup() %>%
+    distinct(Contrast, cluster, Coding, .keep_all=T) %>%
+    filter(!is.na(Coding)) %>%
+    ggplot(aes(x=logef, color=Coding)) +
+    geom_vline(xintercept=0, color='gray') +
+    stat_ecdf() + 
+    geom_vline( data = . %>%
+        group_by(Contrast, Coding) %>%
+        summarise(median=median(logef, na.rm=T)),
+        aes(xintercept=median, color=Coding), linetype="dashed") +
+    scale_color_manual(values=c("TRUE"="#1f78b4", "FALSE"="#e31a1c"), labels=c("TRUE"="Productive", "FALSE"="Nonproductive", name=NULL)) +
+    facet_wrap(~Contrast) +
+    coord_cartesian(xlim=c(-2, 2)) +
+    labs(color = NULL, x="splicing log2FC", y="Cumulative fraction") +
+    theme_bw() +
+    theme(strip.text = element_text(size = 8))
+
+```
+
+Ok, so from here, I don't think mine/Sara's polysome profilnig libraries are useful. All the other contrasts seem more reasonable in the sense that of the differential spliced unproductive junctions, they are generally up-regulated in the NMD enriched conditions, and the productive junctions are down-regulated, and mine as well filter out the Sara samples to avoid too many points/colors on plots.
+
+```{r}
+diff.splicing.results <- diff.splicing.results %>%
+    filter(!str_detect(Contrast, "Sara"))
+
+DE.results <- DE.results %>%
+    filter(!str_detect(condition, "Sara"))
+```
+
+Now let's write out the differential splicing results as bed files for browsing in IGV...
+
+```{r, eval=F}
+# DE.results
+
+# diff.splicing.results %>%
+#     filter(IsSig) %>%
+#     mutate(color = scales::col_numeric(
+#         palette = scales::div_gradient_pal(low = "#4575b4", mid = "#ffffbf", high = "#d73027"),
+#         domain = c(-10, 10)
+#     )(pmax(pmin(deltapsi, 10), -10))) %>%
+#     mutate(thickStart = start, thickEnd = end) %>%
+#     # head() %>%
+#     mutate(score = str_glue("{round(deltapsi, 2)}={round(Control*100, 2)}-{round(NMD_enriched*100,2)}")) %>%
+#     dplyr::select(Contrast, chrom, start, end, intron, score, strand, thickStart, thickEnd, color) %>%
+#     group_by(Contrast) %>%
+#     dplyr::select(-Contrast) %>%
+#     group_walk(~write_tsv(.x, paste0("../output/DiffSplicing_SigIntron_Beds/", unique(.y$Contrast), ".bed"), col_names = FALSE))
+
+bind_rows(
+    DE.results %>%
+        dplyr::select(GeneID, condition, logFC, PValue, FDR, Symbol) %>%
+        inner_join(RepresentativeTranscripts, by=c("GeneID", "Symbol")) %>%
+        dplyr::select(V1:V12, GeneID:Symbol) %>%
+        mutate(name = Symbol) %>%
+        mutate(score = str_glue("logFC={round(logFC, 2)};P={round(PValue, 2)};FDR={round(FDR, 2)}")) %>%
+        mutate(score = ".") %>%
+        mutate(color = scales::col_numeric(
+            palette = scales::div_gradient_pal(low = "#276419", mid = "#f7f7f7", high = "#8e0152"),
+            domain = c(-1, 1)
+        )(pmax(pmin(logFC, 1), -1))) %>%
+        dplyr::select(chrom=V1, start=V2, end=V3, name, score, strand=V6, thickStart=V7, thickEnd=V8, color, blockCount=V10, blockSizes=V11, blockStarts=V12, Contrast=condition),
+    diff.splicing.results %>%
+        filter(IsSig) %>%
+        mutate(color = scales::col_numeric(
+            palette = scales::div_gradient_pal(low = "#4575b4", mid = "#ffffbf", high = "#d73027"),
+            domain = c(-10, 10)
+        )(pmax(pmin(deltapsi, 10), -10))) %>%
+        mutate(thickStart = start, thickEnd = end) %>%
+        # head() %>%
+        mutate(score = str_glue("{round(deltapsi, 2)}={round(Control*100, 2)}-{round(NMD_enriched*100,2)}")) %>%
+        dplyr::select(Contrast, chrom, start, end, name=intron, score, strand, thickStart, thickEnd, color) %>%
+        mutate(blockCount= 1, blockSizes = as.character(end - start), blockStarts = as.character(0))
+    ) %>%
+    # filter(end > start) %>%
+    # nrow()
+    group_by(Contrast) %>%
+    arrange(chrom, start, end) %>%
+    dplyr::select(-Contrast) %>%
+    # dplyr::select(chrom, start, end, name, score, strand, thickStart, thickEnd, color) %>%
+    group_walk(~write_tsv(.x, paste0("../output/DiffSplicing_SigIntron_Beds/", unique(.y$Contrast), ".bed"), col_names = FALSE))
+
+
+    # Color key for gene expression (logFC)
+tibble(logFC = seq(-1, 1, length.out = 100)) %>%
+        ggplot(aes(x = logFC, y = 1, fill = logFC)) +
+        geom_tile() +
+        scale_fill_gradient2(
+            low = "#276419",
+            mid = "#f7f7f7",
+            high = "#8e0152",
+            midpoint = 0,
+            limits = c(-1, 1)
+        ) +
+        labs(fill = "logFC", x = "logFC", y = NULL, title = "Gene Expression Color Key") +
+        theme_minimal() +
+        theme(axis.text.y = element_blank(),
+              axis.ticks.y = element_blank())
+
+    # Color key for splicing (deltaPSI)
+    tibble(deltapsi = seq(-10, 10, length.out = 100)) %>%
+        ggplot(aes(x = deltapsi, y = 1, fill = deltapsi)) +
+        geom_tile() +
+        scale_fill_gradient2(
+            low = "#4575b4",
+            mid = "#ffffbf",
+            high = "#d73027",
+            midpoint = 0,
+            limits = c(-10, 10)
+        ) +
+        labs(fill = "deltaPSI", x = "deltaPSI (%)", y = NULL, title = "Splicing Color Key") +
+        theme_minimal() +
+        theme(axis.text.y = element_blank(),
+              axis.ticks.y = element_blank())
+```
+
+
+### Check example of known NMD targets
+
+Let's look at a few junctions of intersest in known NMD targets...
+
+First let's look at SRSF6, which is a known NMD target.
+
+```{r}
+diff.splicing.results %>%
+    filter(Gene_name=="SRSF6" & !Coding)
+
+diff.splicing.results %>%
+    filter(Gene_name=="SRSF6" & !Coding) %>%
+    ggplot(aes(color=Contrast, x=deltapsi, y=-log10(p.adjust))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    geom_vline(xintercept = 0, linetype="dashed") +
+    theme_bw() +
+    facet_wrap(~intron) 
+
+diff.splicing.results %>%
+    filter(Gene_name=="SRSF6" & !Coding) %>%
+    filter(intron == "chr20:43459420:43459771:clu_53323_+")
+
+
+DE.results %>%
+    filter(Symbol == "SRSF6") %>%
+    ggplot(aes(color=condition, x=logFC, y=-log10(FDR))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    theme_bw()
+```
+
+Ok, that checks out... the chr20:43459420:43459771:clu_53323_+ is significantly upregulated in most all contrasts, except weirdly not UPF1
+
+
+Let's try some of the other SR proteins and splicing genes that are known conserved NMD targets...
+
+```{r}
+DE.results %>%
+    filter(Symbol %in% c("U2AF2", "RBFOX2", "SRSF4", "SRSF3", "SRSF6", "HNRNPL")) %>%
+    ggplot(aes(color=condition, x=logFC, y=-log10(FDR))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    geom_vline(xintercept = 0, linetype="dashed") +
+    theme_bw() +
+    facet_wrap(~Symbol)
+
+```
+
+Ok not so sure what to make of those DE results... Will check splicing results for those genes...
+
+And some other conserved ones mentioned in the literature... like PSD95 (DLG4, ENSG00000132535)
+
+...
+```{r}
+DE.results %>%
+    filter(str_detect(GeneID, "ENSG00000132535")) %>%
+    ggplot(aes(color=condition, x=logFC, y=-log10(FDR))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    theme_bw()
+```
+
+and bak1, though i'm not sure if the NMD event studied by sika zheng lab is conserved in humans
+
+```{r}
+
+DE.results %>%
+    filter(Symbol == "BAK1") %>%
+    ggplot(aes(color=condition, x=logFC, y=-log10(FDR))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    theme_bw()
+```
+
+
+
+Now let's check ARHGAP17, an exon-skipping NMD event I highlighted in the leafcutter2 manuscript.
+
+```{r}
+diff.splicing.results %>%
+    filter(Gene_name=="ARHGAP17" & !Coding) 
+
+diff.splicing.results %>%
+    filter(Gene_name=="ARHGAP17" & !Coding) %>%
+    ggplot(aes(color=Contrast, x=deltapsi, y=-log10(p.adjust))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    geom_vline(xintercept = 0, linetype="dashed") +
+    theme_bw() +
+    facet_wrap(~intron) 
+
+diff.splicing.results %>%
+    filter(Gene_name=="ARHGAP17" & !Coding) %>%
+    filter(intron == "chr16:24954730:24959911:clu_29742_-")
+
+DE.results %>%
+    filter(Symbol == "ARHGAP17") %>%
+    ggplot(aes(color=condition, x=logFC, y=-log10(FDR))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    theme_bw()
+```
+
+Ok this one is interesting... I had to manually look up the coordinates of the exon skipping junction I mentioned in leafcutter2 manuscript, as chr16:24954730:24959911:clu_29742_-, but not sensible effect size direction in the cyclohexamide vs dmso contrast or naRNA vs steady state... Not sure what to make of this one... And the effect size of the host gene expression is not significant or negative (which could still be consistent with NMD junctions, if they are very rarely used).
+
+```{r}
+diff.splicing.results %>%
+    filter(Gene_name=="SCN8A" & !Coding)
+
+diff.splicing.results %>%
+    filter(Gene_name=="SCN8A" & !Coding) %>%
+    ggplot(aes(color=Contrast, x=deltapsi, y=-log10(p.adjust))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    geom_vline(xintercept = 0, linetype="dashed") +
+    theme_bw() +
+    facet_wrap(~intron) 
+
+DE.results %>%
+    filter(Symbol == "SCN8A") %>%
+    ggplot(aes(color=condition, x=logFC, y=-log10(FDR))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    theme_bw()
+
+```
+
+no splicing tests in SCN8A... I think it is just not expressed in any of these samples. But there are tests in differential expression that suggest up-regulation in nuclear RNA... I could recover that significant splice junction in my re-analysis of Mazin data in leafcutter2 manuscript. I could consider adding all that data to the analysis.
+
+Let's try SYNGAP1
+
+```{r}
+diff.splicing.results %>%
+    filter(Gene_name=="SYNGAP1" & !Coding) %>%
+    ggplot(aes(color=Contrast, x=deltapsi, y=-log10(p.adjust))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    geom_vline(xintercept = 0, linetype="dashed") +
+    theme_bw() +
+    facet_wrap(~intron) 
+
+diff.splicing.results %>%
+    filter(Gene_name=="SYNGAP1" & !Coding) %>%
+    filter(intron == "chr6:33438919:33440553:clu_72389_+")
+
+DE.results %>%
+    filter(Symbol == "SYNGAP1") %>%
+    ggplot(aes(color=condition, x=logFC, y=-log10(FDR))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    geom_vline(xintercept = 0, linetype="dashed") +
+    theme_bw()
+
+```
+
+Ok, generally a positive deltaPSI... again some disagreement between naRNA vs steady state and the other contrasts... that's not necessarily unsurprising considering how unspliced naRNA is.
+
+
+Let's check some others that the TANGO paper mentions... SCN1A?
+```{r}
+diff.splicing.results %>%
+    filter(Gene_name=="SCN1A" & !Coding)
+
+DE.results %>%
+    filter(Symbol == "SCN1A") %>%
+    ggplot(aes(color=condition, x=logFC, y=-log10(FDR))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    geom_vline(xintercept = 0, linetype="dashed") +
+    theme_bw()
+```
+
+Ok no tests for SCN1A... it just isn't tested/expressed in these analyses.
+
+```{r}
+diff.splicing.results %>%
+    filter(Gene_name=="CD274" & !Coding)
+
+diff.splicing.results %>%
+    filter(Gene_name=="CD274" & !Coding) %>%
+    ggplot(aes(color=Contrast, x=deltapsi, y=-log10(p.adjust))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    geom_vline(xintercept = 0, linetype="dashed") +
+    theme_bw() +
+    facet_wrap(~intron) 
+
+DE.results %>%
+    filter(Symbol == "CD274") %>%
+    ggplot(aes(color=condition, x=logFC, y=-log10(FDR))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    geom_vline(xintercept = 0, linetype="dashed") +
+    theme_bw()
+
+```
+
+And PCCA...
+
+```{r}
+diff.splicing.results %>%
+    filter(Gene_name=="PCCA" & !Coding) %>%
+    ggplot(aes(color=Contrast, x=deltapsi*100, y=-log10(p.adjust))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    geom_vline(xintercept = 0, linetype="dashed") +
+    theme_bw() +
+    facet_wrap(~intron, scales="free") 
+
+diff.splicing.results %>%
+    filter(Gene_name=="PCCA" & !Coding) %>%
+    filter(!Contrast == "FairAndGEUVADIS_naRNA_vs_SteadyState") %>%
+    ggplot(aes(color=Contrast, x=deltapsi, y=-log10(p.adjust))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    geom_vline(xintercept = 0, linetype="dashed") +
+    theme_bw() +
+    facet_wrap(~intron) 
+
+diff.splicing.results %>%
+    filter(Gene_name=="PCCA" & !Coding) %>%
+    filter(!Contrast == "FairAndGEUVADIS_naRNA_vs_SteadyState") %>%
+    ggplot(aes(color=Contrast, x=deltapsi, y=-log10(p))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    geom_vline(xintercept = 0, linetype="dashed") +
+    theme_bw() +
+    facet_wrap(~intron) 
+
+
+
+DE.results %>%
+    filter(Symbol == "PCCA") %>%
+    ggplot(aes(color=condition, x=logFC, y=-log10(FDR))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    geom_vline(xintercept = 0, linetype="dashed") +
+    theme_bw()
+```
+
+Ok from all of these, I think a trend might be emerging that gene expression might be a decent way to look at this problem... Let's check that gene of interest...
+
+
+### MBD5
+```{r}
+DE.results %>%
+    filter(Symbol == "MBD5") %>%
+    mutate(condition_num = as.integer(factor(condition, levels=unique(condition)))) %>%
+    mutate(condition_label = paste0(condition_num, ". ", condition)) %>%
+    ggplot(aes(color=condition_label, x=logFC, y=-log10(FDR))) +
+    geom_point() +
+    geom_text(aes(label=condition_num), vjust=-0.5, size=3) +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    geom_vline(xintercept = 0, linetype="dashed") +
+    theme_bw() +
+    labs(color="Condition", title="MBD5 is generally increased in NMD enriched conditions")
+
+
+diff.splicing.results %>%
+    filter(Gene_name=="MBD5" & !Coding) %>%
+    group_by(intron) %>%
+    filter(any(IsSig)) %>%
+    ungroup() %>%
+    # filter(!Contrast == "FairAndGEUVADIS_naRNA_vs_SteadyState") %>%
+    ggplot(aes(color=Contrast, x=deltapsi, y=-log10(p))) +
+    geom_point() +
+    geom_hline(yintercept=-log10(0.01), linetype="dashed") +
+    geom_vline(xintercept = 0, linetype="dashed") +
+    theme_bw() +
+    facet_wrap(~intron) 
+
+
+diff.splicing.results %>%
+    filter(Gene_name=="MBD5" & !Coding) %>%
+    filter(deltapsi > 0 & p < 0.01)
+
+
+```
+
+So while somewhat consistently this gene seems to be upregulated in NMD enriching conditions, the junction effect sizes don't really agree across datasets, and these are all 5' UTR region introns which I think is not good candidate for the specific case. Nonethless, I think the most plasuible explanation is that some of these 5' UTR introns creates alternative start codons (either upstream ORFs, or out of frame starts)... 
+
+Let's browse in IGV...
+
+
+
+Looking at the coverage, I am still confused. This gene has generally low coverage. I suspeect alt TSS might be at play between the datasets which leads to hard to interpret PSI splicing effects.
+
+Also, note that later I think some of these polysome profiling could be useful to others in Hastings lab interested in splicing in 5UTR that may alter translation output.
+
+There is one cryptic exon (chr2:148505761-148505830) that is only significant up-regulated in the naRNA-seq vs polyA geuvadis LCL dataset but looking at the coverage in a few samples, it is really low... I think this is an exceedingly rare junction that is not a good TANGO target..
+
+Let's check the annotated alt 5'ss region:
+
+```{r}
+diff.splicing.results %>%
+    filter(cluster == "chr2:clu_50434_+" & Intron_coord == "chr2:148490787-148502435") %>%
+    knitr::kable()
+```
+
+Hmm.. surprisingly it doesn't seem to be tested in most contrasts, and isn't significant in NMD enriched condition in the ones it was tested in...
+
+Let's look at the spliser quantifications
+```{r}
+MBD5_alt5ss_Spliser_quantifications <- read_tsv("../code/scratch/MBD5_Alt5ss_Spliser.tsv")
+
+MBD5_alt5ss_Spliser_quantifications$name
+
+All.samples <- read_tsv("../code/config/samples.tsv") %>%
+    filter(Aligner == "STAR") %>%
+    distinct(sample, .keep_all = TRUE)
+
+All.contrasts <- Sys.glob("../code/config/contrast_groupfiles/*.txt") %>%
+    map_df(~ read_tsv(.x, col_names = F) %>%
+        dplyr::rename(sample = X1, Group = X2) %>%
+        mutate(contrast_file = .x)) %>%
+    left_join(All.samples, by = "sample") %>%
+    mutate(contrast_name = str_replace(basename(contrast_file), ".txt", ""))
+
+MBD5_alt5ss_Spliser_quantifications %>% head()
+
+MBD5_alt5ss_Spliser_quantifications %>%
+    dplyr::select(-c(1,2,3,5,6)) %>%
+    pivot_longer(names_to="sample", values_to="value", -name) %>%
+    left_join(
+        All.contrasts %>%
+            dplyr::select(contrast_name, sample, Group) %>%
+            filter(!str_detect(contrast_name, "Sara")), by="sample") %>%
+    filter(!is.na(Group)) %>%
+    mutate(name = recode(name, 
+        "chr2:148490595:+:D" = "Exon11 productive 5'ss",
+        "chr2:148490788:+:D" = "Exon11 downstream\nonproductive alt 5'ss")) %>%
+    ggplot(aes(y=contrast_name, x=value, color=Group, group=interaction(Group, contrast_name))) +
+    geom_boxplot(position=position_dodge(width=0.8), outlier.shape = NA, alpha=0.7) +
+    scale_y_discrete(limits = rev) +
+    geom_jitter(position=position_jitterdodge(jitter.width=0.2, dodge.width=0.8), size=1, alpha=0.5) +
+    scale_color_manual(values=c("NMD_enriched"="#e31a1c", "Control"="#636363")) +
+    facet_wrap(~name, scales="free_x") +
+    theme_bw() +
+    labs(x="Splice site usage (SpliSER PSI)", y="Contrast", color="Group", title="MBD5 alternative 5' splice site usage (SpliSER quantification)")
+
+```
+
+### 5' UTR splicing
+
+Let's filiter  differential splicing results for introns that are in 5'UTR regions.
+
+
+First get positions of 5'UTR for mane isoforms.
+
+```{bash, eval=F}
+wget -O- "https://ftp.ncbi.nlm.nih.gov/refseq/MANE/MANE_human/current/MANE.GRCh38.v1.4.ensembl_genomic.gtf.gz" | zcat | bedparse gtf2bed --extraFields gene_id,gene_name /dev/stdin | awk -v OFS='\t' '{$4=$4"_"$13"_"$14; print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12}' | bedparse 5pUTR | gzip - > ../data/5pUTR.bed.gz
+```
+
+Now read in the 5'UTR positions
+
+```{r}
+fiveUTR <- read_tsv("../data/5pUTR.bed.gz", col_names = c("chrom", "start", "end", "name", "score", "strand", "thickStart", "thickEnd", "color", "nBlocks", "blockSizes", "blockStarts"))
+
+
+
+fiveUTR %>% head()
+
+```
+
+and intserct with the differential splicing results
+
+```{r}
+diff.splicing.In.5UTR <- diff.splicing.results %>%
+    valr::bed_intersect(., 
+        fiveUTR,
+        suffix=c("", ".utr")
+    ) %>%
+    mutate(FullyWithin = start >= start.utr & end <= end.utr)
+```
+
+And now count number significant differential
+
+```{r}
+
+diff.splicing.In.5UTR %>%
+    filter(IsSig) %>%
+    group_by(Contrast, cluster) %>%
+    mutate(ContainsFullyWithin = any(FullyWithin)) %>%
+    ungroup() %>%
+    distinct(Contrast, cluster, .keep_all=T) %>%
+    count(Contrast, ContainsFullyWithin) %>%
+    arrange(Contrast) %>%
+    ggplot(aes(y=Contrast, x=n, fill=ContainsFullyWithin)) +
+    geom_col(position='stack') +
+    # geom_text(aes(label=n), hjust=-0.1) +
+    scale_y_discrete(limits = rev) +
+    scale_x_continuous(expand = expansion(mult = c(0, 0.1))) +
+    theme_bw() +
+    labs(x="Number of leafcutter significant clusters", y="Contrast", caption=str_glue("FDR<1% & |dPSI|>{dPSI_threshold}%"))
+
+```
+
+I recall they are most interested in the 5UTR junctions that might be blocked by oligo to up-regulate expression. That is, the splice event that is down-regulated in the NMD enriched (or heavy polysome, highly translated) conditions, such that blocking the splice event would up-regulate the expression of the gene.
+
+```{r}
+diff.splicing.In.5UTR %>%
+    filter(IsSig) %>%
+    filter(deltapsi < -10 & FullyWithin) %>%
+    distinct(Contrast, Gene_name, .keep_all=T) %>%
+    count(Contrast) %>%
+    arrange(Contrast) %>%
+    ggplot(aes(y=Contrast, x=n)) +
+    geom_col(position='stack') +
+    # geom_text(aes(label=n), hjust=-0.1) +
+    scale_y_discrete(limits = rev) +
+    scale_x_continuous(expand = expansion(mult = c(0, 0.1))) +
+    theme_bw() +
+    labs(x="Number of differentially spliced genes", y="Contrast", caption=str_glue("FDR<1% & |dPSI|>{dPSI_threshold}% & deltaPSI < -0.20 & FullyWithin"))
+```
+
+One could probably do more here... Like look for overlap between some of the datasets, and which are disease relevant genes
+
+```{r}
+library(ggVennDiagram)
+
+
+venn_data <- diff.splicing.In.5UTR %>%
+    filter(str_detect(Contrast, "Polysome")) %>%
+    filter(IsSig) %>%
+    filter(deltapsi < -10 & FullyWithin) %>%
+    distinct(Contrast, gene_names) %>%
+    group_by(Contrast) %>%
+    summarise(genes = list(unique(gene_names))) %>%
+    deframe()
+
+ggVennDiagram(venn_data) +
+    scale_fill_gradient(low = "white", high = "dodgerblue")
+```
+
+And write out bed file for browsing...
+
+```{r}
+diff.splicing.In.5UTR %>%
+    filter(str_detect(Contrast, "Polysome")) %>%
+    group_by(Contrast, cluster) %>%
+    filter(any(IsSig & FullyWithin & deltapsi < -10)) %>%
+    mutate(color = scales::col_numeric(
+        palette = scales::div_gradient_pal(low = "#4575b4", mid = "#ffffbf", high = "#d73027"),
+        domain = c(-50, 50)
+    )(pmax(pmin(deltapsi, 50), -50))) %>%
+    mutate(thickStart = start, thickEnd = end) %>%
+    dplyr::select(chrom, start, end, cluster, deltapsi, strand, thickStart, thickEnd, color) %>%
+    group_by(Contrast) %>%
+    dplyr::select(-Contrast) %>%
+    group_walk(~write_tsv(.x, paste0("../code/scratch/Polysome_5UTR_splicing_", .y$Contrast[1], ".bed"), col_names = FALSE))
+
+
+# python code/module_workflows/rna_seq/scripts/leafcutter2/scripts/Reformat_gtf.py  -i /project2/yangili1/bjf79/ReferenceGenomes/GRCh38_GencodeRelease44Comprehensive/Reference.gtf -o /dev/null -fa /project2/yangili1/bjf79/ReferenceGenomes/GRCh38_GencodeRelease44Comprehensive/Reference.fa -bed12_out code/scratch/Reference.FirstORF_AtLeast42aa.bed -infer_transcript_type_approach C -translation_approach E -infer_gene_type_approach B
+
+```
+
+From browsing, these bed files, here is an example in the COMMD5 gene. Across all three polysome profiling contrast, red junction isoform is less translated (less associated with heavy polysomes) compared to the blue junction. Note that the red junction isoform includes an upstream ORF, as noted by the red tick i highlighted above the gene structure, and the my custom re-formatting of the annotated transcript structures to denote the first ORF with thick bars.
+
+![Example of COMMD5 gene splicing in polysome profiling contrasts](assets/COMMD5_Example.png)

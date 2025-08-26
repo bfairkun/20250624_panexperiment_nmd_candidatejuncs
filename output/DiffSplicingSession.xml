@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<Session genome="hg38" locus="chr8:144848175-144855048" version="8">
+    <Resources>
+        <Resource path="DiffSplicing_SigIntron_Beds/Ritter.ESCLightPolysome_vs_HeavyPolysome.bed.gz" type="bed"/>
+        <Resource path="DiffSplicing_SigIntron_Beds/Colombo.UPF1_vs_Scramble.bed.gz" type="bed"/>
+        <Resource path="DiffSplicing_SigIntron_Beds/Darman_Cycloxhexamide_vs_DMSO.bed.gz" type="bed"/>
+        <Resource path="DiffSplicing_SigIntron_Beds/Ritter.NPCLightPolysome_vs_HeavyPolysome.bed.gz" type="bed"/>
+        <Resource path="DiffSplicing_SigIntron_Beds/DylanUnpublishedFractionation.SH-SY5YNuclear_vs_Cytoplasmic.bed.gz" type="bed"/>
+        <Resource path="DiffSplicing_SigIntron_Beds/Colombo.SM67_and_SMG7_vs_Scramble.bed.gz" type="bed"/>
+        <Resource path="CODING_COLORED_LEAFCUTTER_INTRONS.bed.gz" type="bed"/>
+        <Resource path="DiffSplicing_SigIntron_Beds/DylanUnpublishedFractionation.JurkatNuclear_vs_Cytoplasmic.bed.gz" type="bed"/>
+        <Resource path="DiffSplicing_SigIntron_Beds/FairAndGEUVADIS_naRNA_vs_SteadyState.bed.gz" type="bed"/>
+        <Resource path="DiffSplicing_SigIntron_Beds/DylanUnpublishedFractionation.LCLNuclear_vs_Cytoplasmic.bed.gz" type="bed"/>
+        <Resource path="DiffSplicing_SigIntron_Beds/Floor_LightPolysome_vs_HeavyPolysome.bed.gz" type="bed"/>
+        <Resource path="../../ReferenceGenomes/Human_UCSC.hg38_GencodeComprehensive46/Reference.ColoredTranscripts.bed.gz" type="bed"/>
+    </Resources>
+    <Panel height="129" name="DataPanel" width="1453">
+        <Track attributeKey="Reference sequence" clazz="org.broad.igv.track.SequenceTrack" fontSize="10" id="Reference sequence" name="Reference sequence" sequenceTranslationStrandValue="POSITIVE" shouldShowTranslation="false" visible="true"/>
+        <Track attributeKey="Refseq Select" clazz="org.broad.igv.track.FeatureTrack" colorScale="ContinuousColorScale;0.0;104.0;255,255,255;0,0,178" fontSize="10" groupByStrand="false" id="https://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/ncbiRefSeqSelect.txt.gz" name="Refseq Select" visible="true"/>
+        <Track attributeKey="Reference.ColoredTranscripts.bed.gz" clazz="org.broad.igv.track.FeatureTrack" displayMode="SQUISHED" featureVisibilityWindow="21089925" fontSize="10" groupByStrand="false" id="/Volumes/project2/yangili1/bjf79/ReferenceGenomes/Human_UCSC.hg38_GencodeComprehensive46/Reference.ColoredTranscripts.bed.gz" name="Annotated transcripts colored by transcript_type" visible="true"/>
+    </Panel>
+    <Panel height="726" name="FeaturePanel" width="1453">
+        <Track attributeKey="Colombo.SM67_and_SMG7_vs_Scramble.bed.gz" clazz="org.broad.igv.track.FeatureTrack" displayMode="SQUISHED" featureVisibilityWindow="70463237" fontSize="10" groupByStrand="false" id="/Volumes/project2/yangili1/bjf79/20250624_panexperiment_nmd_candidatejuncs/output/DiffSplicing_SigIntron_Beds/Colombo.SM67_and_SMG7_vs_Scramble.bed.gz" name="Colombo.SM67_and_SMG7_vs_Scramble.bed.gz" visible="true"/>
+        <Track attributeKey="Colombo.UPF1_vs_Scramble.bed.gz" clazz="org.broad.igv.track.FeatureTrack" displayMode="SQUISHED" featureVisibilityWindow="117813740" fontSize="10" groupByStrand="false" id="/Volumes/project2/yangili1/bjf79/20250624_panexperiment_nmd_candidatejuncs/output/DiffSplicing_SigIntron_Beds/Colombo.UPF1_vs_Scramble.bed.gz" name="Colombo.UPF1_vs_Scramble.bed.gz" visible="true"/>
+        <Track attributeKey="Darman_Cycloxhexamide_vs_DMSO.bed.gz" clazz="org.broad.igv.track.FeatureTrack" displayMode="SQUISHED" featureVisibilityWindow="95917392" fontSize="10" groupByStrand="false" id="/Volumes/project2/yangili1/bjf79/20250624_panexperiment_nmd_candidatejuncs/output/DiffSplicing_SigIntron_Beds/Darman_Cycloxhexamide_vs_DMSO.bed.gz" name="Darman_Cycloxhexamide_vs_DMSO.bed.gz" visible="true"/>
+        <Track attributeKey="DylanUnpublishedFractionation.JurkatNuclear_vs_Cytoplasmic.bed.gz" clazz="org.broad.igv.track.FeatureTrack" displayMode="SQUISHED" featureVisibilityWindow="88345755" fontSize="10" groupByStrand="false" id="/Volumes/project2/yangili1/bjf79/20250624_panexperiment_nmd_candidatejuncs/output/DiffSplicing_SigIntron_Beds/DylanUnpublishedFractionation.JurkatNuclear_vs_Cytoplasmic.bed.gz" name="DylanUnpublishedFractionation.JurkatNuclear_vs_Cytoplasmic.bed.gz" visible="true"/>
+        <Track attributeKey="DylanUnpublishedFractionation.LCLNuclear_vs_Cytoplasmic.bed.gz" clazz="org.broad.igv.track.FeatureTrack" displayMode="SQUISHED" featureVisibilityWindow="103042231" fontSize="10" groupByStrand="false" id="/Volumes/project2/yangili1/bjf79/20250624_panexperiment_nmd_candidatejuncs/output/DiffSplicing_SigIntron_Beds/DylanUnpublishedFractionation.LCLNuclear_vs_Cytoplasmic.bed.gz" name="DylanUnpublishedFractionation.LCLNuclear_vs_Cytoplasmic.bed.gz" visible="true"/>
+        <Track attributeKey="DylanUnpublishedFractionation.SH-SY5YNuclear_vs_Cytoplasmic.bed.gz" clazz="org.broad.igv.track.FeatureTrack" displayMode="SQUISHED" featureVisibilityWindow="2147483647" fontSize="10" groupByStrand="false" id="/Volumes/project2/yangili1/bjf79/20250624_panexperiment_nmd_candidatejuncs/output/DiffSplicing_SigIntron_Beds/DylanUnpublishedFractionation.SH-SY5YNuclear_vs_Cytoplasmic.bed.gz" name="DylanUnpublishedFractionation.SH-SY5YNuclear_vs_Cytoplasmic.bed.gz" visible="true"/>
+        <Track attributeKey="FairAndGEUVADIS_naRNA_vs_SteadyState.bed.gz" clazz="org.broad.igv.track.FeatureTrack" displayMode="SQUISHED" featureVisibilityWindow="35029651" fontSize="10" groupByStrand="false" id="/Volumes/project2/yangili1/bjf79/20250624_panexperiment_nmd_candidatejuncs/output/DiffSplicing_SigIntron_Beds/FairAndGEUVADIS_naRNA_vs_SteadyState.bed.gz" name="FairAndGEUVADIS_naRNA_vs_SteadyState.bed.gz" visible="true"/>
+        <Track attributeKey="Floor_LightPolysome_vs_HeavyPolysome.bed.gz" clazz="org.broad.igv.track.FeatureTrack" displayMode="SQUISHED" featureVisibilityWindow="112024818" fontSize="10" groupByStrand="false" id="/Volumes/project2/yangili1/bjf79/20250624_panexperiment_nmd_candidatejuncs/output/DiffSplicing_SigIntron_Beds/Floor_LightPolysome_vs_HeavyPolysome.bed.gz" name="Floor_LightPolysome_vs_HeavyPolysome.bed.gz" visible="true"/>
+        <Track attributeKey="Ritter.ESCLightPolysome_vs_HeavyPolysome.bed.gz" clazz="org.broad.igv.track.FeatureTrack" displayMode="SQUISHED" featureVisibilityWindow="132558758" fontSize="10" groupByStrand="false" id="/Volumes/project2/yangili1/bjf79/20250624_panexperiment_nmd_candidatejuncs/output/DiffSplicing_SigIntron_Beds/Ritter.ESCLightPolysome_vs_HeavyPolysome.bed.gz" name="Ritter.ESCLightPolysome_vs_HeavyPolysome.bed.gz" visible="true"/>
+        <Track attributeKey="Ritter.NPCLightPolysome_vs_HeavyPolysome.bed.gz" clazz="org.broad.igv.track.FeatureTrack" displayMode="SQUISHED" featureVisibilityWindow="158792990" fontSize="10" groupByStrand="false" id="/Volumes/project2/yangili1/bjf79/20250624_panexperiment_nmd_candidatejuncs/output/DiffSplicing_SigIntron_Beds/Ritter.NPCLightPolysome_vs_HeavyPolysome.bed.gz" name="Ritter.NPCLightPolysome_vs_HeavyPolysome.bed.gz" visible="true"/>
+        <Track attributeKey="CODING_COLORED_LEAFCUTTER_INTRONS.bed.gz" clazz="org.broad.igv.track.FeatureTrack" displayMode="SQUISHED" featureVisibilityWindow="6727301" fontSize="10" groupByStrand="false" id="/Volumes/project2/yangili1/bjf79/20250624_panexperiment_nmd_candidatejuncs/output/CODING_COLORED_LEAFCUTTER_INTRONS.bed.gz" name="test introns colored by prediction" visible="true"/>
+    </Panel>
+    <PanelLayout dividerFractions="0.09857142857142857"/>
+    <HiddenAttributes>
+        <Attribute name="DATA FILE"/>
+        <Attribute name="DATA TYPE"/>
+        <Attribute name="NAME"/>
+    </HiddenAttributes>
+</Session>

@@ -14,9 +14,47 @@ use rule * from rna_seq as rna_seq_*
 CreateSymlinksOfDir1ContentsIntoDir2("module_workflows/rna_seq/scripts/", "scripts/")
 
 
+ruleorder: rna_seq_leafcutter_ds_contrasts_special_contrasts > rna_seq_leafcutter_ds_contrasts
+
+
 rule all:
     input:
         # The first rule should define the default target files
         # Subsequent target rules can be specified below. They should start with all_*.
+
+
+rule rna_seq_leafcutter_ds_contrasts_special_contrasts:
+    input:
+        groupfile = lambda wildcards: os.path.abspath(rna_seq.config['contrast_group_files_prefix'] + "{contrast}.txt"),
+        numers = lambda wildcards: rna_seq.get_filled_path_from_contrast(wildcards, "rna_seq/SplicingAnalysis/leafcutter/{GenomeName}/clustering/leafcutter_perind_numers.counts.gz"),
+    output:
+        outputdir = directory("rna_seq/SplicingAnalysis/differential_splicing/{contrast}/"),
+        effect_sizes = "rna_seq/SplicingAnalysis/differential_splicing/{contrast}/leaf_effect_sizes.txt",
+        pvalues = "rna_seq/SplicingAnalysis/differential_splicing/{contrast}/leaf_cluster_significance.txt",
+    threads: 4
+    wildcard_constraints:
+        # treatment = "|".join(rna_seq.contrasts)
+        treatment = "|".join(["SaraUnpublishedPolysomeProfiling_Monosome_vs_HeavyPolysome_FalconTubeHighYield", "SaraUnpublishedPolysomeProfiling_Monosome_vs_HeavyPolysome_LowYield", "SaraUnpublishedPolysomeProfiling_Monosome_vs_HeavyPolysome_S4_LowYield", "SaraUnpublishedPolysomeProfiling_Light_vs_HeavyPolysome_S4_LowYield",
+        "SaraUnpublishedPolysomeProfiling_Light_vs_HeavyPolysome_S3_LowYield"])
+
+    resources:
+        ntasks = 5,
+        mem_mb = 24000
+    params:
+        ExtraParams = "-i 1 -g 1"
+    log:
+        "logs/leafcutter_ds/{contrast}.log"
+    shell:
+        """
+        mkdir -p {output.outputdir}
+        /software/R-3.4.3-el7-x86_64/bin/Rscript scripts/leafcutter/scripts/leafcutter_ds.R -p {threads} -o {output.outputdir}/leaf {params.ExtraParams} {input.numers} {input.groupfile} &> {log}
+        """
+
+
+rule Collect_New_Contrasts:
+    input:
+        expand("rna_seq/SplicingAnalysis/differential_splicing_tidy/{contrast}/Results.tsv.gz", contrast=["SaraUnpublishedPolysomeProfiling_Monosome_vs_HeavyPolysome_FalconTubeHighYield", "SaraUnpublishedPolysomeProfiling_Monosome_vs_HeavyPolysome_LowYield", "SaraUnpublishedPolysomeProfiling_Monosome_vs_HeavyPolysome_S4_LowYield", "SaraUnpublishedPolysomeProfiling_Light_vs_HeavyPolysome_S4_LowYield",
+        "SaraUnpublishedPolysomeProfiling_Light_vs_HeavyPolysome_S3_LowYield"]),
+        # expand("rna_seq/differential_expression/{contrast}/results.tsv.gz", contrast=["SaraUnpublishedPolysomeProfiling_Monosome_vs_HeavyPolysome_FalconTubeHighYield", "SaraUnpublishedPolysomeProfiling_Monosome_vs_HeavyPolysome_LowYield"]),
 
 include: "rules/other.smk"

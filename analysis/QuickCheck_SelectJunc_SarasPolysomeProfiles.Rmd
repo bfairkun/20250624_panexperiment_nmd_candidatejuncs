@@ -1,0 +1,107 @@
+---
+title: "20250910_QuickCheck_SelectJunc_SarasPolysomeProfiles"
+author: "Benjamin Fair"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = F, message = F)
+```
+
+## Introduction
+
+In this notebook, I will plot the splicing results from Sara's polysome profile RNA-seq to check that things make sense, in relation to the other samples I have analyzed at a few splice junctions of interest that I know should be different among heavy vs light polysomes.
+
+
+## Load libs
+
+```{r}
+library(tidyverse)
+library(data.table)
+```
+
+## Load junc data
+
+```{r}
+
+PSI <- fread("../code/rna_seq/SplicingAnalysis/leafcutter/GRCh38_GencodeRelease44Comprehensive/juncTableBeds/PSI.sorted.bed.gz")
+
+counts <- fread("../code/rna_seq/SplicingAnalysis/leafcutter/GRCh38_GencodeRelease44Comprehensive/juncTableBeds/JuncCounts.sorted.bed.gz")
+
+samples <- read_tsv("../code/config/samples.tsv") %>%
+    distinct(sample, .keep_all = T)
+
+```
+
+Get some juncs of interest... for example:
+
+- COMMD5 uORF 5'UTR junc: chr8:144851395:144852839:clu_79660_-
+- SRSF2 NMD junc chr17:76735158:76735772:clu_35804_-
+- SRSF10 NMD junc chr1:23978273:23978653:clu_1153_-
+- SYNGAP1 NMD junc chr6:33438919:33440553:clu_72389_+
+- NAE1 alt AUG exon: chr16:66828077:66830847:clu_30325_
+
+```{r}
+JuncsOfInterest <- c("chr8:144851395:144852839:clu_79660_-",
+                    "chr17:76735158:76735772:clu_35804_-",
+                    # "chr6:33438919:33440553:clu_72389_+", too few reads in Sara's data
+                    "chr16:66828077:66830847:clu_30325_-",
+                    "chr1:23978273:23978653:clu_1153_-")
+
+counts %>%
+    filter(junc %in% JuncsOfInterest) %>%
+    pivot_longer(cols = -c(1:6), names_to = "sample", values_to = "Counts") %>%
+    left_join(samples, by = "sample") %>%
+    filter(StudyFirstAuthor %in% c("Ritter", "UnpublishedPolysomeProfiling")) %>%
+    filter(cell_type %in% c("embryonic stem cell (ESC)", "LCL")) %>%
+    mutate(Fraction = case_when(
+        str_detect(Description, "onosome") ~ "Monosome",
+        str_detect(Description, "eavy") ~ "Heavy polysome",
+        str_detect(Description, "ight") ~ "Light polysome",
+        TRUE ~ "Other"
+    )) %>%
+    filter(!Fraction == "Other") %>%
+    filter(Platform == "ILLUMINA") %>%
+    arrange(junc, cell_type, Fraction)
+
+
+PSI %>%
+    filter(junc %in% JuncsOfInterest) %>%
+    pivot_longer(cols = -c(1:6), names_to = "sample", values_to = "PSI") %>%
+    left_join(samples, by = "sample") %>%
+    filter(StudyFirstAuthor %in% c("Ritter", "UnpublishedPolysomeProfiling", "Floor")) %>%
+    filter(cell_type %in% c("embryonic stem cell (ESC)", "LCL", "HEK293T")) %>%
+    mutate(Fraction = case_when(
+        str_detect(Description, "onosome") | str_detect(Description, "80S_rep") ~ "Monosome",
+        str_detect(Description, "eavy") | str_detect(Description, "poly[5678]") ~ "Heavy polysome",
+        str_detect(Description, "ight") | str_detect(Description, "poly[234]") ~ "Light polysome",
+        TRUE ~ "Other"
+    )) %>%
+    filter(!Fraction == "Other") %>%
+    filter(Platform == "ILLUMINA") %>%
+    arrange(junc, cell_type, Fraction) %>%
+    mutate(Fraction = factor(Fraction, levels = c("Monosome", "Light polysome", "Heavy polysome"))) %>%
+    mutate( junc = recode(junc,
+                         "chr8:144851395:144852839:clu_79660_-" = "COMMD5 uORF junc",
+                         "chr17:76735158:76735772:clu_35804_-" = "SRSF2 NMD junc",
+                         "chr6:33438919:33440553:clu_72389_+" = "SYNGAP1 NMD junc",
+                         "chr1:23978273:23978653:clu_1153_-" = "SRSF10 NMD junc",
+                         "chr16:66828077:66830847:clu_30325_-" = "NAE1 alt AUG exon junc"
+    )) %>%
+    mutate(label = recode(cell_type,
+                          "embryonic stem cell (ESC)" = "Sanford lab, ESCs, Ritter et al ",
+                          "LCL" = "Sara, LCLs",
+                          "HEK293T" = "Doudna lab, HEK293T, Floor et al"
+    )) %>%
+    ggplot(aes(x = Fraction, y = PSI, color = label)) +
+    geom_jitter(width = 0.1, height = 0) +
+    facet_wrap(~junc, scales = "free_y") +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom") +
+    guides(color = guide_legend(ncol = 1)) +
+    labs(y = "Percent spliced in (PSI)", color = "Dataset")
+
+    
+    
+```

@@ -225,6 +225,29 @@ diff.splicing.results %>%
 
 ```
 
+Let's consider a bit more all of these different Sara* contrasts.
+
+```{r}
+library(GGally)
+
+diff.splicing.results %>%
+    filter(str_detect(Contrast, "SaraUnpublishedPolysomeProfiling_Monosome_vs_HeavyPolysome")) %>%
+    group_by(intron) %>%
+    filter(any(IsSig)) %>%
+    ungroup() %>%
+    dplyr::select(Contrast, intron, cluster, deltapsi, p, Coding) %>%
+    distinct(intron, Contrast, .keep_all=T) %>%
+    pivot_wider(names_from = Contrast, values_from = c(deltapsi, p)) %>%
+    ggpairs(., columns = which(startsWith(names(.), "deltapsi_")),
+            upper = list(continuous = wrap("cor", method= "pearson", size=3)),
+            lower = list(continuous = wrap("points", alpha=0.5, size=0.5)),
+            diag = list(continuous = wrap("densityDiag")),
+            aes(color=Coding)) +
+    theme_bw()
+```
+
+Ok, so there is generally some positive correlation between these contrasts, as there should be, and especially between the lowyield vs highyield 'technical' replicates
+
 Let's also look at effect sizes of the unproductive vs productive
 
 ```{r}
@@ -243,8 +266,9 @@ diff.splicing.results %>%
         group_by(Contrast, Coding) %>%
         summarise(median=median(logef, na.rm=T)),
         aes(xintercept=median, color=Coding), linetype="dashed") +
-    facet_wrap(~Contrast) +
+    facet_wrap(~Contrast, labeller = label_wrap_gen(width = 30)) +
     coord_cartesian(xlim=c(-2, 2)) +
+    theme(strip.text = element_text(size = 8)) +
     theme_bw()
 
 diff.splicing.results %>%
@@ -275,10 +299,12 @@ Ok, so from here, I don't think mine/Sara's polysome profilnig libraries are use
 
 ```{r}
 diff.splicing.results <- diff.splicing.results %>%
-    filter(!str_detect(Contrast, "Sara"))
+    filter(!str_detect(Contrast, "Sara") | Contrast == "SaraUnpublishedPolysomeProfiling_Monosome_vs_HeavyPolysome_FalconTubeHighYield")
+
+diff.splicing.results %>% pull(Contrast) %>% unique()
 
 DE.results <- DE.results %>%
-    filter(!str_detect(condition, "Sara"))
+    filter(!str_detect(condition, "Sara") | condition == "SaraUnpublishedPolysomeProfiling_Monosome_vs_HeavyPolysome_FalconTubeHighYield")
 ```
 
 Now let's write out the differential splicing results as bed files for browsing in IGV...
@@ -367,6 +393,11 @@ tibble(logFC = seq(-1, 1, length.out = 100)) %>%
               axis.ticks.y = element_blank())
 ```
 
+Conver those beds to indexed bedgz
+
+```{bash, eval=F}
+for f in *.bed; do bgzip -f "$f"; tabix -f -p bed "${f}.gz"; done
+```
 
 ### Check example of known NMD targets
 
@@ -823,8 +854,103 @@ diff.splicing.In.5UTR %>%
 
 # python code/module_workflows/rna_seq/scripts/leafcutter2/scripts/Reformat_gtf.py  -i /project2/yangili1/bjf79/ReferenceGenomes/GRCh38_GencodeRelease44Comprehensive/Reference.gtf -o /dev/null -fa /project2/yangili1/bjf79/ReferenceGenomes/GRCh38_GencodeRelease44Comprehensive/Reference.fa -bed12_out code/scratch/Reference.FirstORF_AtLeast42aa.bed -infer_transcript_type_approach C -translation_approach E -infer_gene_type_approach B
 
+
+diff.splicing.In.5UTR %>%
+    filter(str_detect(Contrast, "Polysome")) %>%
+    group_by(Contrast, cluster) %>%
+    filter(any(IsSig & FullyWithin & deltapsi < -10)) %>%
+    ungroup() %>%
+    filter(FullyWithin) %>%
+    distinct(Contrast)
+
+diff.splicing.In.5UTR %>%
+    filter(str_detect(Contrast, "Polysome")) %>%
+    group_by(Contrast, cluster) %>%
+    filter(any(IsSig & FullyWithin & deltapsi < -10)) %>%
+    ungroup() %>%
+    filter(FullyWithin) %>%
+    distinct(intron, .keep_all=T) %>%
+    dplyr::select(chrom, start, end, intron, deltapsi, strand) %>%
+    write_tsv("../output/PolysomeProfiling_5UTR_DiffSplicing_Introns.bed", col_names = FALSE)
+
 ```
 
 From browsing, these bed files, here is an example in the COMMD5 gene. Across all three polysome profiling contrast, red junction isoform is less translated (less associated with heavy polysomes) compared to the blue junction. Note that the red junction isoform includes an upstream ORF, as noted by the red tick i highlighted above the gene structure, and the my custom re-formatting of the annotated transcript structures to denote the first ORF with thick bars.
 
 ![Example of COMMD5 gene splicing in polysome profiling contrasts](assets/COMMD5_Example.png)
+
+### Translation candidate juncs
+
+For Fiona/Yang, I want to make a list of juncs that might be good candidates for blocking with ASOs to upregulate at translational level. So there are a few filters I will apply here:
+
+- Must be differential spliced (>10% dPSI, FDR<1%) in at least one of the polysome profiling contrasts
+- Note whether in 5'UTR, CDS, or coding region
+- Must be down-regulated in heavy polysome (so inneficiently translated in native conditions, means more room for up-regulation by splice switching oligo)
+
+```{r}
+
+
+diff.splicing.results %>%
+    mutate(IsPolysomeProfilingContrast = str_detect(Contrast, "olysome")) %>%
+    filter(IsSig & IsPolysomeProfilingContrast) %>%
+    filter(deltapsi > 10 & IsPolysomeProfilingContrast) %>%
+    add_count(intron) %>%
+    filter(n>1) %>%
+    inner_join(
+        DE.results,
+        by=c("Gene_name"="Symbol", "Contrast"="condition")
+    ) %>%
+    filter(FDR< 0.01 & logFC > 1 & IsPolysomeProfilingContrast) %>%
+    # filter(Coding & !UTR) %>%
+    filter(intron %in% diff.splicing.In.5UTR$intron) %>%
+    distinct(Gene_name, .keep_all=T) %>%
+    dplyr::select(Gene_name, everything())
+
+```
+
+Ok so from browsing a lot of those, I think this is pretty complex and requires lots of manual inspection to make sense... Maybe it makes sense to first filter for disease genes worth more manual inspection...
+
+Specifically, from TableS2 from [Hijikata et al](https://www.nature.com/articles/s41598-017-08902-1#additional-information), they have a list of haploinsufficient disease genes... These would be some of the ones worth prioritizing for up-regulation by splice switching oligo.
+
+```{r}
+library(readxl)
+url <- "https://static-content.springer.com/esm/art%3A10.1038%2Fs41598-017-08902-1/MediaObjects/41598_2017_8902_MOESM3_ESM.xls"
+download.file(url, destfile = "temp.xls", mode = "wb")
+HI.genes <- read_excel("temp.xls", sheet=1)
+
+
+diff.splicing.results %>%
+    mutate(IsPolysomeProfilingContrast = str_detect(Contrast, "olysome")) %>%
+    filter(IsSig & IsPolysomeProfilingContrast) %>%
+    filter(abs(deltapsi) > 10 & IsPolysomeProfilingContrast) %>%
+    add_count(intron) %>%
+    filter(n>1) %>%
+    inner_join(
+        DE.results,
+        by=c("Gene_name"="Symbol", "Contrast"="condition")
+    ) %>%
+    # filter(FDR< 0.01 & abs(logFC) > 1 & IsPolysomeProfilingContrast) %>%
+    inner_join(
+        HI.genes,
+        by=c("Gene_name"="Gene")
+    ) %>%
+    dplyr::select(Gene_name, everything())
+
+
+```
+
+And finally let's write out a table in case Fiona wants to browse these or try to replicate some of these effects
+
+```{r}
+diff.splicing.results %>%
+    left_join(
+        DE.results,
+        by=c("Gene_name"="Symbol", "Contrast"="condition")
+    ) %>%
+    write_tsv("../code/scratch/AllContrasts.DiffSplicing.DiffExpression.tsv.gz")
+
+```
+
+Ok I think that TSPAN12 is a good one...
+
+let's plot that one in pygenometracks
